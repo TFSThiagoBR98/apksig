@@ -244,7 +244,7 @@ public abstract class ZipUtils {
                 int actualCommentLength =
                         getUnsignedInt16(
                                 zipContents, eocdStartPos + ZIP_EOCD_COMMENT_LENGTH_FIELD_OFFSET);
-                if (actualCommentLength == expectedCommentLength) {
+                if (actualCommentLength == expectedCommentLength || actualCommentLength == 0) {
                     return eocdStartPos;
                 }
             }
