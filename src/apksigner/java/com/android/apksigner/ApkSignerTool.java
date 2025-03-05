@@ -96,6 +96,9 @@ public class ApkSignerTool {
             } else if ("verify".equals(cmd)) {
                 verify(Arrays.copyOfRange(params, 1, params.length));
                 return;
+            } else if ("fetchSignatures".equals(cmd)) {
+                fetchSignatures(Arrays.copyOfRange(params, 1, params.length));
+                return;
             } else if ("rotate".equals(cmd)) {
                 rotate(Arrays.copyOfRange(params, 1, params.length));
                 return;
@@ -607,7 +610,7 @@ public class ApkSignerTool {
         try {
             result = verifySourceStamp
                     ? apkVerifier.verifySourceStamp(sourceCertDigest)
-                    : apkVerifier.verify();
+                    : apkVerifier.verify(false);
         } catch (MinSdkVersionException e) {
             String msg = e.getMessage();
             if (!msg.endsWith(".")) {
@@ -766,6 +769,130 @@ public class ApkSignerTool {
         if ((warningsTreatedAsErrors) && (warningsEncountered)) {
             System.exit(1);
             return;
+        }
+    }
+
+    private static void fetchSignatures(String[] params) throws Exception {
+        if (params.length == 0) {
+            printUsage(HELP_PAGE_VERIFY);
+            return;
+        }
+
+        File inputApk = null;
+        int minSdkVersion = 1;
+        boolean minSdkVersionSpecified = false;
+        int maxSdkVersion = Integer.MAX_VALUE;
+        boolean maxSdkVersionSpecified = false;
+        boolean verifySourceStamp = false;
+        File v4SignatureFile = null;
+        OptionsParser optionsParser = new OptionsParser(params);
+        String optionName;
+        String optionOriginalForm = null;
+        String sourceCertDigest = null;
+        while ((optionName = optionsParser.nextOption()) != null) {
+            optionOriginalForm = optionsParser.getOptionOriginalForm();
+            if ("min-sdk-version".equals(optionName)) {
+                minSdkVersion = optionsParser.getRequiredIntValue("Mininimum API Level");
+                minSdkVersionSpecified = true;
+            } else if ("max-sdk-version".equals(optionName)) {
+                maxSdkVersion = optionsParser.getRequiredIntValue("Maximum API Level");
+                maxSdkVersionSpecified = true;
+            } else if (("help".equals(optionName)) || ("h".equals(optionName))) {
+                printUsage(HELP_PAGE_VERIFY);
+                return;
+            } else if ("v4-signature-file".equals(optionName)) {
+                v4SignatureFile = new File(optionsParser.getRequiredValue(
+                        "Input V4 Signature File"));
+            } else if ("in".equals(optionName)) {
+                inputApk = new File(optionsParser.getRequiredValue("Input APK file"));
+            } else if ("verify-source-stamp".equals(optionName)) {
+                verifySourceStamp = optionsParser.getOptionalBooleanValue(true);
+            } else if ("stamp-cert-digest".equals(optionName)) {
+                sourceCertDigest = optionsParser.getRequiredValue(
+                        "Expected source stamp certificate digest");
+            } else {
+                throw new ParameterException(
+                        "Unsupported option: " + optionOriginalForm + ". See --help for supported"
+                                + " options.");
+            }
+        }
+        params = optionsParser.getRemainingParams();
+
+        if (inputApk != null) {
+            // Input APK has been specified in preceding parameters. We don't expect any more
+            // parameters.
+            if (params.length > 0) {
+                throw new ParameterException(
+                        "Unexpected parameter(s) after " + optionOriginalForm + ": " + params[0]);
+            }
+        } else {
+            // Input APK has not been specified in preceding parameters. The next parameter is
+            // supposed to be the input APK.
+            if (params.length < 1) {
+                throw new ParameterException("Missing APK");
+            } else if (params.length > 1) {
+                throw new ParameterException(
+                        "Unexpected parameter(s) after APK (" + params[1] + ")");
+            }
+            inputApk = new File(params[0]);
+        }
+
+        if ((minSdkVersionSpecified) && (maxSdkVersionSpecified)
+                && (minSdkVersion > maxSdkVersion)) {
+            throw new ParameterException(
+                    "Min API Level (" + minSdkVersion + ") > max API Level (" + maxSdkVersion
+                            + ")");
+        }
+
+        ApkVerifier.Builder apkVerifierBuilder = new ApkVerifier.Builder(inputApk);
+        if (minSdkVersionSpecified) {
+            apkVerifierBuilder.setMinCheckedPlatformVersion(minSdkVersion);
+        }
+        if (maxSdkVersionSpecified) {
+            apkVerifierBuilder.setMaxCheckedPlatformVersion(maxSdkVersion);
+        }
+        if (v4SignatureFile != null) {
+            if (!v4SignatureFile.exists()) {
+                throw new ParameterException("V4 signature file does not exist: "
+                        + v4SignatureFile.getCanonicalPath());
+            }
+            apkVerifierBuilder.setV4SignatureFile(v4SignatureFile);
+        }
+
+        ApkVerifier apkVerifier = apkVerifierBuilder.build();
+        ApkVerifier.Result result;
+        try {
+            result = verifySourceStamp
+                    ? apkVerifier.verifySourceStamp(sourceCertDigest)
+                    : apkVerifier.verify(true);
+        } catch (MinSdkVersionException e) {
+            String msg = e.getMessage();
+            if (!msg.endsWith(".")) {
+                msg += '.';
+            }
+            throw new MinSdkVersionException(
+                    "Failed to determine APK's minimum supported platform version"
+                            + ". Use --min-sdk-version to override",
+                    e);
+        }
+
+        List<X509Certificate> signerCerts = result.getSignerCertificates();
+        // The v3.1 signature scheme allows key rotation to target T+ while the original
+        // signing key can still be used with v3.0; if a v3.1 block is present then also
+        // include the target SDK versions for both rotation and the original signing key.
+        if (result.isVerifiedUsingV31Scheme()) {
+            for (ApkVerifier.Result.V3SchemeSignerInfo signer :
+                    result.getV31SchemeSigners()) {
+
+                printCertificateHash(signer.getCertificate(), true, false, false);
+            }
+            for (ApkVerifier.Result.V3SchemeSignerInfo signer : result.getV3SchemeSigners()) {
+                printCertificateHash(signer.getCertificate(), true, false, false);
+            }
+        } else {
+            for (X509Certificate signerCert : signerCerts) {
+                printCertificateHash(signerCert, true, false, false);
+            }
         }
     }
 
@@ -1215,6 +1342,41 @@ public class ApkSignerTool {
                         : i + lineWidth));
             }
             System.out.println(END_CERTIFICATE);
+        }
+    }
+
+    /**
+     * Prints details from the provided certificate to stdout.
+     *
+     * @param cert    the certificate to be displayed.
+     * @param name    the name to be used to identify the certificate.
+     * @param verbose boolean indicating whether public key details from the certificate should be
+     *                displayed.
+     * @param pemOutput boolean indicating whether the PEM encoding of the certificate should be
+     *                  displayed.
+     * @throws NoSuchAlgorithmException     if an instance of MD5, SHA-1, or SHA-256 cannot be
+     *                                      obtained.
+     * @throws CertificateEncodingException if an error is encountered when encoding the
+     *                                      certificate.
+     */
+    public static void printCertificateHash(X509Certificate cert, boolean printSha256, boolean printSha1, boolean printMd5) throws NoSuchAlgorithmException, CertificateEncodingException {
+        if (cert == null) {
+            throw new NullPointerException("cert == null");
+        }
+        if (sha256 == null || sha1 == null || md5 == null) {
+            sha256 = MessageDigest.getInstance("SHA-256");
+            sha1 = MessageDigest.getInstance("SHA-1");
+            md5 = MessageDigest.getInstance("MD5");
+        }
+        byte[] encodedCert = cert.getEncoded();
+        if (printSha256) {
+            System.out.println(HexEncoding.encode(sha256.digest(encodedCert)));
+        }
+        if (printSha1) {
+            System.out.println(HexEncoding.encode(sha1.digest(encodedCert)));
+        }
+        if (printMd5) {
+            System.out.println(HexEncoding.encode(md5.digest(encodedCert)));
         }
     }
 

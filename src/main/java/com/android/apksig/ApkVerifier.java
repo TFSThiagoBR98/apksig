@@ -147,7 +147,7 @@ public class ApkVerifier {
      * @throws IllegalStateException    if this verifier's configuration is missing required
      *                                  information.
      */
-    public Result verify() throws IOException, ApkFormatException, NoSuchAlgorithmException,
+    public Result verify(boolean byPassCheck) throws IOException, ApkFormatException, NoSuchAlgorithmException,
             IllegalStateException {
         Closeable in = null;
         try {
@@ -161,7 +161,7 @@ public class ApkVerifier {
             } else {
                 throw new IllegalStateException("APK not provided");
             }
-            return verify(apk);
+            return verify(apk, byPassCheck);
         } finally {
             if (in != null) {
                 in.close();
@@ -180,7 +180,7 @@ public class ApkVerifier {
      * @throws NoSuchAlgorithmException if the APK's signatures cannot be verified because a
      *                                  required cryptographic algorithm implementation is missing
      */
-    private Result verify(DataSource apk)
+    private Result verify(DataSource apk, boolean byPassCheck)
             throws IOException, ApkFormatException, NoSuchAlgorithmException {
         int maxSdkVersion = mMaxSdkVersion;
 
@@ -239,7 +239,7 @@ public class ApkVerifier {
                 } catch (ApkSigningBlockUtils.SignatureNotFoundException ignored) {
                     // v3.1 signature not required
                 }
-                if (result.containsErrors()) {
+                if (result.containsErrors() && !byPassCheck) {
                     return result;
                 }
             }
@@ -271,7 +271,7 @@ public class ApkVerifier {
                         result.addError(Issue.V31_BLOCK_FOUND_WITHOUT_V3_BLOCK);
                     }
                 }
-                if (result.containsErrors()) {
+                if (result.containsErrors() && !byPassCheck) {
                     return result;
                 }
             }
@@ -299,7 +299,7 @@ public class ApkVerifier {
                 } catch (ApkSigningBlockUtils.SignatureNotFoundException ignored) {
                     // v2 signature not required
                 }
-                if (result.containsErrors()) {
+                if (result.containsErrors() && !byPassCheck) {
                     return result;
                 }
             }
@@ -311,7 +311,7 @@ public class ApkVerifier {
                 foundApkSigSchemeIds.add(
                         ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V4);
                 result.mergeFrom(v4Result);
-                if (result.containsErrors()) {
+                if (result.containsErrors() && !byPassCheck) {
                     return result;
                 }
             }
@@ -355,7 +355,7 @@ public class ApkVerifier {
                     ApkSigningBlockUtils.VERSION_JAR_SIGNATURE_SCHEME,
                     getApkContentDigestFromV1SigningScheme(cdRecords, apk, zipSections));
         }
-        if (result.containsErrors()) {
+        if (result.containsErrors() && !byPassCheck) {
             return result;
         }
 
@@ -392,7 +392,7 @@ public class ApkVerifier {
         } catch (ZipFormatException e) {
             throw new ApkFormatException("Failed to read APK", e);
         }
-        if (result.containsErrors()) {
+        if (result.containsErrors() && !byPassCheck) {
             return result;
         }
 
@@ -603,7 +603,7 @@ public class ApkVerifier {
             }
         }
 
-        if (result.containsErrors()) {
+        if (result.containsErrors() && !byPassCheck) {
             return result;
         }
 
